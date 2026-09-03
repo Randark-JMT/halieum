@@ -1,0 +1,85 @@
+name: Issue License
+
+# Manually triggered: provide an id and an expiry datetime. The workflow signs
+# (or re-signs) the license with the RSA private key held in the repository
+# secret HALIEUM_SIGNING_KEY, commits it back as the source of truth, and
+# publishes every license to GitHub Pages.
+#
+# One-time setup: Repo Settings -> Pages -> Source = "GitHub Actions", and add
+# the secret HALIEUM_SIGNING_KEY (PEM produced by tools/gen_keys.py).
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "License id (A-Z a-z 0-9 . _ - , max 128)"
+        required: true
+        type: string
+      datetime:
+        description: "Expiry datetime, ISO-8601 UTC (e.g. 2026-12-31T23:59:59Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: issue-license
+  cancel-in-progress: false
+
+jobs:
+  issue:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install signer dependency
+        run: python -m pip install --upgrade pip pycryptodome
+
+      - name: Sign / update license
+        env:
+          LIC_ID: ${{ github.event.inputs.id }}
+          LIC_EXP: ${{ github.event.inputs.datetime }}
+          HALIEUM_SIGNING_KEY: ${{ secrets.HALIEUM_SIGNING_KEY }}
+        run: python tools/sign_license.py
+
+      - name: Commit license back (source of truth)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add licenses/
+          if git diff --cached --quiet; then
+            echo "No license change to commit."
+          else
+            git commit -m "license: issue/update ${{ github.event.inputs.id }} [skip ci]"
+            git push
+          fi
+
+      - name: Build Pages site
+        run: |
+          mkdir -p site/licenses
+          cp -r licenses/. site/licenses/
+          touch site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

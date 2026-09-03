@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "halieum"
+version = "0.1.0"
+description = "Minimal, dependency-free license guard for personal Python projects."
+readme = "README.md"
+requires-python = ">=3.6"
+authors = [{ name = "halieum" }]
+keywords = ["license", "protection", "guard"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "License :: OSI Approved :: MIT License",
+]
+# Runtime intentionally depends on the standard library ONLY.
+dependencies = []
+
+[project.optional-dependencies]
+# Development / signing helpers. NEVER required at runtime by the package.
+dev = ["pytest>=6.0", "build", "twine"]
+sign = ["pycryptodome>=3.9"]
+
+[project.urls]
+Homepage = "https://github.com/YOUR-USERNAME/halieum"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

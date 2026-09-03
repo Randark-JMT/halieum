@@ -1,0 +1,4 @@
+# License JSON files issued by the "Issue License" GitHub Action are stored
+# here and published via GitHub Pages at:
+#   https://<owner>.github.io/<repo>/licenses/<id>.json
+# This file only exists so the empty directory is tracked by git.
