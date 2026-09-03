@@ -16,7 +16,7 @@ __version__ = "0.1.0"
 # Override at runtime with the environment variable HALIEUM_BASE (used by the
 # test-suite and for custom mirrors). Replace YOUR-USERNAME before release.
 # ---------------------------------------------------------------------------
-DEFAULT_BASE = "https://YOUR-USERNAME.github.io/halieum/"
+DEFAULT_BASE = "https://Randark-JMT.github.io/halieum/"
 LICENSE_PATH = "licenses/{id}.json"
 BASE_ENV_VAR = "HALIEUM_BASE"
 

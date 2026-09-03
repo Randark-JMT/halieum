@@ -27,7 +27,7 @@ dev = ["pytest>=6.0", "build", "twine"]
 sign = ["pycryptodome>=3.9"]
 
 [project.urls]
-Homepage = "https://github.com/YOUR-USERNAME/halieum"
+Homepage = "https://github.com/Randark-JMT/halieum"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
