@@ -3,7 +3,7 @@
 
 import json
 
-from halieum import _cache, _license, _net
+from halieum import _cache, _keys, _license, _net
 
 ZERO_SIG = b"\x00" * 128  # matches the 1024-bit throwaway test key
 
@@ -52,7 +52,9 @@ def test_online_id_mismatch(test_pubkey, isolate_cache, monkeypatch,
 
 def test_unconfigured_key_is_inert(isolate_cache, monkeypatch,
                                    license_factory, exp_future):
-    # No test_pubkey fixture -> shipped placeholder (n == 0).
+    # Explicitly simulate the "unconfigured" placeholder (n == 0) so this test
+    # is independent of whether a real key has been generated into _keys.py.
+    monkeypatch.setattr(_keys, "PUBKEYS", {"k1": (0, 65537)})
     _online(monkeypatch, license_factory("demo-u", exp_future))
     decision, _ = _license.evaluate("demo-u")
     assert decision == _license.UNCONFIGURED
