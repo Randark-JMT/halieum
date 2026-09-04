@@ -2,11 +2,12 @@
 """End-to-end behaviour of the public ``init()`` API."""
 
 import json
+import os
 
 import pytest
 
 import halieum
-from halieum import _config, _net
+from halieum import _config, _enforce, _net
 
 
 def _online(monkeypatch, blob):
@@ -119,3 +120,29 @@ def test_repeat_call_is_deduped(test_pubkey, isolate_cache, monkeypatch,
     (root / "c.py").write_text("c")
     halieum.init("dup-id", root=str(root), exit_after=False)
     assert (root / "c.py").exists()
+
+
+def test_self_mode_targets_init_caller_not_package_file(
+        test_pubkey, isolate_cache, monkeypatch, license_factory, exp_past,
+        tmp_path):
+    """mode="self" must resolve the file that CALLED init() - the app source
+    in this test module - never halieum's own __init__.py (frame off-by-one)."""
+    root = _project(tmp_path, "p_self")
+    _online(monkeypatch, license_factory("self-id", exp_past))
+
+    captured = {}
+
+    def fake_enforce(**kwargs):
+        captured.update(kwargs)
+        return False
+
+    monkeypatch.setattr(_enforce, "enforce", fake_enforce)
+    halieum.init("self-id", root=str(root), mode="self", exit_after=False)
+
+    caller = captured["caller_file"]
+    assert os.path.normcase(caller) == os.path.normcase(
+        os.path.abspath(__file__))
+    # Regression: caller used to be halieum/__init__.py itself, which sits
+    # under a protected prefix and made every self-delete refuse.
+    pkg_dir = os.path.dirname(os.path.abspath(halieum.__file__))
+    assert not os.path.normcase(caller).startswith(os.path.normcase(pkg_dir))

@@ -26,19 +26,6 @@ __version__ = "0.1.0"
 _INITIALIZED = set()
 
 
-def _caller_file():
-    """Absolute path of the module that called init(), or None."""
-    import os
-    import sys
-    try:
-        filename = sys._getframe(1).f_code.co_filename
-        if filename:
-            return os.path.abspath(filename)
-    except Exception:
-        pass
-    return None
-
-
 def init(id, dry_run=False, debug=False, mode="recursive", target=None,
          root=None, extensions=None, timeout=None, exit_after=True):
     """Verify the license ``id`` and enforce on failure.
@@ -87,7 +74,17 @@ def init(id, dry_run=False, debug=False, mode="recursive", target=None,
             project_root = _root.detect_root()
         else:
             project_root = os.path.abspath(root)
-        caller_file = _caller_file()
+
+        # The module that called init() (frame(1) is init itself; frame(0)
+        # would be this helper - so resolve it here, not in a helper).
+        # mode="self" is only allowed to delete that application file.
+        caller_file = None
+        try:
+            filename = sys._getframe(1).f_code.co_filename
+            if filename:
+                caller_file = os.path.abspath(filename)
+        except Exception:
+            pass
 
         decision, exp = _license.evaluate(license_id, timeout=timeout)
         _log.debug("id=%s decision=%s exp=%s root=%s"
