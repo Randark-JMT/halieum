@@ -64,6 +64,7 @@ halieum.init(
     ntp_servers=None,   # Custom NTP hosts (default: built-in list).
     ntp_timeout=None,   # Per-server NTP timeout in seconds (default 5.0).
     ntp_fallback=None,  # "local" (default) | "strict" if NTP is unreachable.
+    recheck_interval=None,  # Opt-in: re-validate every N s in a daemon thread.
 )
 ```
 
@@ -98,6 +99,9 @@ halieum.init("my-id", ntp_fallback="strict")
 
 # Use your own NTP server(s):
 halieum.init("my-id", ntp_servers=["time.internal.example.com"])
+
+# Long-running process: re-check every hour and stop if the licence expired:
+halieum.init("my-id", recheck_interval=3600)
 ```
 
 Output never uses `print` (which a host app can hijack); diagnostics go straight to `sys.stderr` and are silent unless `debug=True`.
@@ -120,6 +124,29 @@ They are tried in order and the first reply wins; override the list with `ntp_se
 - **`ntp_fallback="strict"`** → if no authoritative time can be obtained, halieum exits the host program (exit code `77`) instead of trusting a possibly tampered clock. Nothing is deleted in this case.
 
 Set `ntp=False` to opt out and use the local clock only (the legacy behaviour). NTP needs outbound UDP/123; if your runtime blocks it, either allow it, point `ntp_servers` at a reachable internal server, or pass `ntp=False`.
+
+---
+
+## Long-running tasks & the re-validation watchdog
+
+`init()` verifies the licence **once**, at start-up. A long-running host — a `while True` loop, a server, an async worker — can therefore outlive its licence: nothing re-checks expiry while it keeps running.
+
+Pass `recheck_interval=N` to opt in. halieum then starts **one daemon thread per licence id** that re-validates every `N` seconds using the exact same settings (NTP, timeouts, mode, root). If a re-check **confirms** the licence is EXPIRED or TAMPERED, it applies the same enforcement as start-up and then hard-exits the process:
+
+```python
+# Re-validate every hour; stop the process if the licence has since expired:
+halieum.init("my-id", recheck_interval=3600)
+```
+
+Key points:
+
+- **Opt-in and off by default.** `recheck_interval=None` (the default) checks only once at start-up — the behaviour is unchanged unless you ask for it.
+- **Hard exit (`os._exit`).** The watchdog runs on a background thread, where `sys.exit()` would end only that thread and leave your main loop running. `os._exit()` terminates the whole interpreter immediately — which is what actually stops a `while True`. Note it bypasses `finally`/`atexit` and does not flush buffers, so in-progress writes can be truncated.
+- **Never killed by a transient failure.** Only a *confirmed* EXPIRED/TAMPERED acts. A momentary network failure (`NETFAIL_NOCACHE`) or an unverifiable clock (`TIME_UNVERIFIED`) is a no-op, so a long-running job is not taken down by a blip.
+- **Interval floor.** Values below `60` seconds are clamped up to `60` so the licence server and NTP pool are not hammered.
+- **Honours `exit_after`.** With `exit_after=False` the watchdog enforces (deletes) but leaves the process running.
+- **Not started under `dry_run`.** `dry_run=True` never spawns a watchdog.
+- **One thread per id.** Repeated `init()` calls for the same id never stack watchdog threads, and `import halieum` stays inert (the watchdog module is imported lazily inside `init()`).
 
 ---
 
@@ -180,6 +207,7 @@ halieum is deliberately biased toward *not* deleting:
 - Any **internal halieum error** results in a no-op, never a deletion.
 - `dry_run=True` disables every destructive action and every exit.
 - `import halieum` is inert; nothing runs until `init()` is called, and the same `id` is only ever processed once per process.
+- The background re-validation watchdog is **opt-in** (`recheck_interval`); it never starts by default, and a transient network failure or unverifiable clock mid-run never stops the host — only a confirmed EXPIRED/TAMPERED does.
 
 ---
 

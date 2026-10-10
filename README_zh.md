@@ -64,6 +64,7 @@ halieum.init(
     ntp_servers=None,   # 自定义 NTP 服务器（默认：内置权威列表）。
     ntp_timeout=None,   # 单个 NTP 服务器超时（秒），默认 5.0。
     ntp_fallback=None,  # NTP 不可达时："local"（默认）| "strict"。
+    recheck_interval=None,  # 可选：每 N 秒在守护线程中重新校验一次。
 )
 ```
 
@@ -98,6 +99,9 @@ halieum.init("my-id", ntp_fallback="strict")
 
 # 使用你自己的 NTP 服务器：
 halieum.init("my-id", ntp_servers=["time.internal.example.com"])
+
+# 长时间运行的进程：每小时复检一次，许可证过期即停止：
+halieum.init("my-id", recheck_interval=3600)
 ```
 
 输出永远不会使用 `print` (宿主程序可以劫持它)；诊断信息直接写入 `sys.stderr`，除非 `debug=True`，否则保持静默。
@@ -120,6 +124,29 @@ time.apple.com        ntp.aliyun.com    cn.pool.ntp.org   ntp.ntsc.ac.cn
 - **`ntp_fallback="strict"`** → 若无法获得权威时间，halieum 会退出宿主程序（退出码 `77`），而不是信任一个可能被篡改的时钟。此情况下不会删除任何文件。
 
 如需关闭并仅使用本地时钟（旧有行为），设置 `ntp=False` 即可。NTP 需要出站 UDP/123；若你的运行环境屏蔽了它，可以放行、把 `ntp_servers` 指向可达的内网服务器，或传入 `ntp=False`。
+
+---
+
+## 长时间任务与后台复检看门狗
+
+`init()` 只在**启动时**校验一次许可证。因此一个长时间运行的宿主 —— `while True` 循环、服务器、异步 worker —— 可能会「活得比许可证更久」：在它持续运行期间，没有任何东西再去检查是否已过期。
+
+传入 `recheck_interval=N` 即可启用。halieum 会为**每个许可证 id 启动一个守护线程**，每 `N` 秒用完全相同的设置（NTP、超时、mode、root）重新校验一次。若某次复检**确认**许可证已 EXPIRED（过期）或 TAMPERED（被篡改），它会执行与启动时相同的清除，然后硬退出进程：
+
+```python
+# 每小时复检一次；若期间许可证已过期，则停止进程：
+halieum.init("my-id", recheck_interval=3600)
+```
+
+要点：
+
+- **可选，默认关闭。** `recheck_interval=None`（默认）只在启动时检查一次 —— 除非你主动开启，否则行为完全不变。
+- **硬退出（`os._exit`）。** 看门狗运行在后台线程，而 `sys.exit()` 在该线程只会结束它自己，主循环照跑不误。`os._exit()` 会立即终止整个解释器 —— 这才是真正能停下 `while True` 的手段。注意它会跳过 `finally`/`atexit` 且不刷新缓冲区，因此进行中的写入可能被截断。
+- **绝不会因瞬时故障被杀。** 只有**确认**的 EXPIRED/TAMPERED 才会动作。短暂的网络失败（`NETFAIL_NOCACHE`）或时钟不可信（`TIME_UNVERIFIED`）都是空操作，因此一次网络抖动不会拖垮长时间任务。
+- **间隔下限。** 小于 `60` 秒的值会被向上钳制到 `60`，避免疯狂请求许可证服务器与 NTP 池。
+- **遵循 `exit_after`。** 当 `exit_after=False` 时，看门狗会执行清除（删除）但让进程继续运行。
+- **`dry_run` 下不启动。** `dry_run=True` 绝不会派生看门狗。
+- **每个 id 一个线程。** 对同一 id 反复调用 `init()` 不会叠加看门狗线程，且 `import halieum` 仍是惰性的（看门狗模块在 `init()` 内部延迟导入）。
 
 ---
 
@@ -181,6 +208,7 @@ halieum 刻意倾向&#x4E8E;_&#x4E0D;_&#x5220;除：
 - 任何 **halieum 内部错误**都只会导致空操作，绝不删除。
 - `dry_run=True` 会禁用一切破坏性操作与一切退出。
 - `import halieum` 是惰性的；在调用 `init()` 之前什么都不运行，且同一个 `id` 在每个进程中只会被处理一次。
+- 后台复检看门狗为**可选**（`recheck_interval`）；默认绝不启动，且运行途中的瞬时网络故障或时钟不可信绝不会停止宿主 —— 只有确认的 EXPIRED/TAMPERED 才会。
 
 ---
 
