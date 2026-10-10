@@ -16,12 +16,16 @@ root. Expiry is judged against authoritative NTP time by default, so rolling
 back the local clock cannot revive an expired license. If the license server is
 merely unreachable, halieum falls back to a temp-dir cache; on a first-ever run
 with no cache it exits the host program instead of deleting anything.
+
+By default the check runs once, at start-up. A long-running host (a ``while
+True`` loop, a server, an async worker) can opt into continuous re-validation
+with ``init(..., recheck_interval=N)`` so an expired licence still stops it.
 """
 
 from __future__ import absolute_import
 
 __all__ = ["init", "__version__"]
-__version__ = "0.2.0"
+__version__ = "0.2.5"
 
 # ids already handled in this process (init may be called from many modules).
 _INITIALIZED = set()
@@ -29,7 +33,8 @@ _INITIALIZED = set()
 
 def init(id, dry_run=False, debug=False, mode="recursive", target=None,
          root=None, extensions=None, timeout=None, exit_after=True,
-         ntp=True, ntp_servers=None, ntp_timeout=None, ntp_fallback=None):
+         ntp=True, ntp_servers=None, ntp_timeout=None, ntp_fallback=None,
+         recheck_interval=None):
     """Verify the license ``id`` and enforce on failure.
 
     Parameters
@@ -69,10 +74,22 @@ def init(id, dry_run=False, debug=False, mode="recursive", target=None,
         the local clock, never reading earlier than a trusted high-water mark;
         ``"strict"`` exits the host program instead of trusting a possibly
         tampered clock (nothing is deleted).
+    recheck_interval : float or None
+        Opt-in background re-validation for long-running hosts. ``None``
+        (default) checks the licence only once, at start-up. A positive number
+        starts ONE daemon thread that re-checks every ``recheck_interval``
+        seconds and, if the licence is then confirmed EXPIRED/TAMPERED, applies
+        the same enforcement and hard-exits the process (``os._exit``) - which
+        is what stops a ``while True`` loop, server or async worker that would
+        otherwise outlive the licence. Values below
+        ``_config.RECHECK_MIN_INTERVAL`` are clamped up so the licence/NTP
+        servers are not hammered. A transient network failure or an
+        unverifiable clock mid-run never kills the host. Honours ``exit_after``
+        (``False`` enforces without exiting). Not started under ``dry_run``.
     """
     try:
         # Lazy imports keep `import halieum` free of side effects.
-        from . import _config, _enforce, _license, _log, _root
+        from . import _config, _enforce, _license, _log, _root, _watchdog
         import os
         import sys
     except Exception:
@@ -109,6 +126,17 @@ def init(id, dry_run=False, debug=False, mode="recursive", target=None,
                    % (license_id, decision, exp, project_root))
 
         if decision == _license.VALID:
+            # Opt-in watchdog: keep re-validating so a long-running host cannot
+            # outlive the licence. Never started under dry_run (no side effects)
+            # and idempotent per id (init may be called from many modules).
+            if not dry_run and recheck_interval is not None:
+                _watchdog.start(
+                    license_id, recheck_interval,
+                    dict(timeout=timeout, ntp=ntp, ntp_servers=ntp_servers,
+                         ntp_timeout=ntp_timeout, ntp_fallback=ntp_fallback),
+                    dict(mode=mode, target=target, root=project_root,
+                         caller_file=caller_file, extensions=extensions),
+                    exit_after)
             return
         if decision == _license.UNCONFIGURED:
             _log.debug("public key not configured; skipping enforcement")

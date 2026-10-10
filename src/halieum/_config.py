@@ -7,7 +7,7 @@ the modules that need them.
 """
 
 # Bumped on every release; keep in sync with pyproject.toml.
-__version__ = "0.2.0"
+__version__ = "0.2.5"
 
 # ---------------------------------------------------------------------------
 # Where licenses are published (GitHub Pages).
@@ -77,6 +77,17 @@ SKIP_DIR_NAMES = frozenset([".git", ".hg", ".svn"])
 EXIT_NETFAIL = 78    # first run, network failed, no cache -> exit host program
 EXIT_ENFORCED = 79   # license confirmed invalid -> enforcement applied
 EXIT_TIMEFAIL = 77   # ntp_fallback="strict" and no authoritative time -> exit
+
+# ---------------------------------------------------------------------------
+# Optional background re-validation watchdog (init(recheck_interval=N)).
+#
+# init() checks the licence only once, so a long-running host (a ``while True``
+# loop, a server, an async worker) can outlive its licence. Passing a positive
+# ``recheck_interval`` starts one daemon thread that re-checks every N seconds
+# and enforces on a confirmed expiry. The floor below clamps a too-small
+# interval up so it cannot hammer the licence server and the NTP pool.
+# ---------------------------------------------------------------------------
+RECHECK_MIN_INTERVAL = 60   # seconds; smaller requests are lifted to this
 
 # Cache file prefix inside the OS temp directory (kept non-obvious on purpose).
 CACHE_PREFIX = ".hl_"
