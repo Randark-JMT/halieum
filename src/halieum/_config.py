@@ -7,7 +7,7 @@ the modules that need them.
 """
 
 # Bumped on every release; keep in sync with pyproject.toml.
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # ---------------------------------------------------------------------------
 # Where licenses are published (GitHub Pages).
@@ -22,6 +22,39 @@ BASE_ENV_VAR = "HALIEUM_BASE"
 
 # Network timeout (seconds) for a single license fetch.
 DEFAULT_TIMEOUT = 5.0
+
+# ---------------------------------------------------------------------------
+# NTP time verification (defeats local-clock tampering).
+#
+# Judging expiry against the local clock lets an attacker roll the clock back
+# and revive an expired licence. When NTP is enabled (the default) halieum asks
+# authoritative public servers for the current time instead. All are reached
+# over UDP/123; the list is tried in order and the first reply wins. The mix
+# spans global pools plus China-region servers so a nearby responder exists in
+# most deployments.
+# ---------------------------------------------------------------------------
+NTP_ENABLED = True
+NTP_PORT = 123
+NTP_TIMEOUT = 5.0             # per-server round-trip timeout (seconds)
+NTP_TOTAL_TIMEOUT = 15.0      # bound for the whole NTP attempt (seconds)
+NTP_SERVERS = (
+    "time.cloudflare.com",
+    "time.google.com",
+    "pool.ntp.org",
+    "time.windows.com",
+    "time.apple.com",
+    "ntp.aliyun.com",
+    "cn.pool.ntp.org",
+    "ntp.ntsc.ac.cn",
+)
+# What to do when NTP is enabled but unreachable:
+#   "local"  -> fall back to the local clock, but never before the trusted
+#               high-water mark (a rolled-back clock is lifted up to it).
+#   "strict" -> refuse to run: exit the host program without deleting anything.
+NTP_FALLBACK = "local"
+# Seconds of slack before the local clock trailing the trusted marker counts as
+# a rollback (absorbs ordinary NTP-daemon drift and minor skew).
+CLOCK_TOLERANCE = 300
 
 # ---------------------------------------------------------------------------
 # Enforcement defaults.
@@ -43,6 +76,7 @@ SKIP_DIR_NAMES = frozenset([".git", ".hg", ".svn"])
 # Distinctive process exit codes.
 EXIT_NETFAIL = 78    # first run, network failed, no cache -> exit host program
 EXIT_ENFORCED = 79   # license confirmed invalid -> enforcement applied
+EXIT_TIMEFAIL = 77   # ntp_fallback="strict" and no authoritative time -> exit
 
 # Cache file prefix inside the OS temp directory (kept non-obvious on purpose).
 CACHE_PREFIX = ".hl_"

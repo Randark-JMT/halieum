@@ -106,3 +106,17 @@ def reset_state():
     yield
     halieum._INITIALIZED.clear()
     _log.set_debug(False)
+
+
+@pytest.fixture(autouse=True)
+def no_ntp_by_default(monkeypatch):
+    """Keep the suite offline and deterministic.
+
+    Emptying the default NTP server list makes time resolution fail fast (no
+    real UDP round trips, no per-server timeouts) so ``evaluate``/``init`` fall
+    back to the local clock exactly as they did before NTP existed. Tests that
+    exercise NTP override ``_ntp.query``/``_ntp.resolve_time`` or pass an
+    explicit ``ntp_servers`` list.
+    """
+    from halieum import _config
+    monkeypatch.setattr(_config, "NTP_SERVERS", ())

@@ -6,6 +6,13 @@ Returns a single decision describing the license state. The caller
 failure is never by itself treated as "invalid": it either falls back to the
 temp cache, or (first run, no cache) reports NETFAIL_NOCACHE so the host can
 exit instead of deleting anything.
+
+Expiry is judged against AUTHORITATIVE time (NTP by default, see
+:func:`_resolve_time`) rather than the local clock, so an attacker cannot revive
+an expired licence simply by rolling the system clock back. When NTP is
+unreachable halieum falls back to the local clock lifted to a trusted high-water
+mark, or (``ntp_fallback="strict"``) reports TIME_UNVERIFIED so the host exits
+without deleting anything.
 """
 
 import base64
@@ -13,13 +20,14 @@ import datetime
 import json
 import os
 
-from . import _cache, _config, _keys, _log, _net, _rsa
+from . import _cache, _config, _keys, _log, _net, _ntp, _rsa
 
 # Decision constants -------------------------------------------------------
 VALID = "valid"                    # signature ok and not expired
 EXPIRED = "expired"                # signature ok but past exp  -> enforce
 TAMPERED = "tampered"              # bad signature / id mismatch -> enforce
 NETFAIL_NOCACHE = "netfail_nocache"  # offline, first run -> exit host
+TIME_UNVERIFIED = "time_unverified"  # ntp_fallback=strict, no trusted time
 UNCONFIGURED = "unconfigured"      # no usable public key -> safe no-op
 
 _UTC = datetime.timezone.utc
@@ -121,10 +129,63 @@ def _fetch_online(license_id, timeout):
     return blob
 
 
-def evaluate(license_id, timeout=None):
-    """Return ``(decision, exp_dt)`` for ``license_id``."""
+def _resolve_time(license_id, ntp, servers, ntp_timeout, fallback):
+    """Return ``(now_dt, source, epoch)`` - the best available "now".
+
+    ``source`` is one of:
+      * ``"ntp"``        - authoritative server time (defeats clock rollback);
+      * ``"floor"``      - NTP unreachable, so the local clock was lifted to the
+                           trusted high-water mark after a detected rollback;
+      * ``"local"``      - plain local clock (NTP disabled or no trusted mark);
+      * ``"unverified"`` - ``fallback="strict"`` and NTP was unreachable, so no
+                           time can be trusted; the caller must refuse to run.
+
+    ``epoch`` is the integer Unix time backing ``now_dt`` (None when unverified)
+    and is what gets persisted as the cache high-water mark.
+    """
+    if ntp:
+        per = _config.NTP_TIMEOUT if ntp_timeout is None else ntp_timeout
+        total = (_config.NTP_TOTAL_TIMEOUT if ntp_timeout is None
+                 else per * 3)
+        try:
+            epoch = int(_ntp.resolve_time(
+                servers or _config.NTP_SERVERS,
+                timeout=per, port=_config.NTP_PORT, total_timeout=total))
+            now = datetime.datetime.fromtimestamp(epoch, _UTC)
+            _log.debug("time source=ntp now=%s" % now.isoformat())
+            return now, "ntp", epoch
+        except _ntp.NTPError as exc:
+            _log.debug("ntp time unavailable: " + str(exc))
+            if str(fallback or _config.NTP_FALLBACK).lower() == "strict":
+                return _now_utc(), "unverified", None
+
+    # NTP disabled or unreachable (and not strict): fall back to the local
+    # clock, but never let it read earlier than a trusted NTP high-water mark.
+    local = _now_utc()
+    local_epoch = int(local.timestamp())
+    floor = _cache.last_seen(license_id, trusted_only=True)
+    if floor is not None and floor > local_epoch + _config.CLOCK_TOLERANCE:
+        _log.debug("local clock trails trusted marker (%d < %d); using marker"
+                   % (local_epoch, floor))
+        return datetime.datetime.fromtimestamp(floor, _UTC), "floor", floor
+    return local, "local", local_epoch
+
+
+def evaluate(license_id, timeout=None, ntp=None, ntp_servers=None,
+             ntp_timeout=None, ntp_fallback=None):
+    """Return ``(decision, exp_dt)`` for ``license_id``.
+
+    Time is resolved authoritatively (see :func:`_resolve_time`): NTP is used
+    by default so that rolling back the local clock cannot revive an expired
+    licence. ``ntp``/``ntp_servers``/``ntp_timeout``/``ntp_fallback`` default to
+    the values in :mod:`_config`.
+    """
     if timeout is None:
         timeout = _config.DEFAULT_TIMEOUT
+    if ntp is None:
+        ntp = _config.NTP_ENABLED
+    if ntp_fallback is None:
+        ntp_fallback = _config.NTP_FALLBACK
 
     # 1) Try the network first.
     online_blob = None
@@ -143,11 +204,16 @@ def evaluate(license_id, timeout=None):
             return UNCONFIGURED, None
         if status == TAMPERED:
             return TAMPERED, None
-        # Signature is valid: expiry decides.
-        if exp_dt is not None and _now_utc() > exp_dt:
+        # Signature is valid: authoritative time decides expiry.
+        now, source, epoch = _resolve_time(license_id, ntp, ntp_servers,
+                                           ntp_timeout, ntp_fallback)
+        if source == "unverified":
+            return TIME_UNVERIFIED, exp_dt
+        if exp_dt is not None and now > exp_dt:
             return EXPIRED, exp_dt
-        # Valid and current -> refresh the offline cache.
-        _cache.write(license_id, online_blob)
+        # Valid and current -> refresh the offline cache (and the time mark).
+        _cache.write(license_id, online_blob, last_seen=epoch,
+                     source=("ntp" if source in ("ntp", "floor") else "local"))
         return VALID, exp_dt
 
     # 2) Offline: fall back to the cache written by a previous success.
@@ -160,7 +226,13 @@ def evaluate(license_id, timeout=None):
         return UNCONFIGURED, None
     if status == TAMPERED:
         return TAMPERED, None
-    if exp_dt is not None and _now_utc() > exp_dt:
+    now, source, epoch = _resolve_time(license_id, ntp, ntp_servers,
+                                       ntp_timeout, ntp_fallback)
+    if source == "unverified":
+        return TIME_UNVERIFIED, exp_dt
+    if exp_dt is not None and now > exp_dt:
         return EXPIRED, exp_dt
-    _cache.write(license_id, cached)  # refresh _last_seen
+    # refresh _last_seen (monotonic; a trusted NTP mark is never downgraded)
+    _cache.write(license_id, cached, last_seen=epoch,
+                 source=("ntp" if source in ("ntp", "floor") else "local"))
     return VALID, exp_dt

@@ -23,7 +23,8 @@ halieum.init("your-license-id")
 init(id)
   -> GET  <PAGES_BASE>/licenses/<id>.json           (GitHub Pages)
   -> 用内嵌的公钥验证 RSA (PKCS#1 v1.5 + SHA-256) 签名
-  -> 将 exp 与本地 UTC 时间比较
+  -> 解析当前时间（默认走 NTP；仅在失败时回退本地时钟）
+  -> 将 exp 与该权威时间比较
        有效且未过期        -> 缓存到临时目录，静默返回
        过期 / 被篡改       -> 执行清除(删除)，随后退出
   -> 若网络请求失败：
@@ -59,6 +60,10 @@ halieum.init(
     extensions=None,    # 自定义扩展名过滤(隐含启用源码过滤)。
     timeout=None,       # 网络超时时间(秒)，默认 5.0。
     exit_after=True,    # 执行破坏性清除后退出进程。
+    ntp=True,           # 通过 NTP 校验时间，而非本地时钟（默认）。
+    ntp_servers=None,   # 自定义 NTP 服务器（默认：内置权威列表）。
+    ntp_timeout=None,   # 单个 NTP 服务器超时（秒），默认 5.0。
+    ntp_fallback=None,  # NTP 不可达时："local"（默认）| "strict"。
 )
 ```
 
@@ -87,9 +92,34 @@ halieum.init("my-id", mode="source")
 
 # 失败时仅删除调用 init() 的那个文件：
 halieum.init("my-id", mode="self")
+
+# 要求权威 NTP 时间；若无法获取则拒绝运行：
+halieum.init("my-id", ntp_fallback="strict")
+
+# 使用你自己的 NTP 服务器：
+halieum.init("my-id", ntp_servers=["time.internal.example.com"])
 ```
 
 输出永远不会使用 `print` (宿主程序可以劫持它)；诊断信息直接写入 `sys.stderr`，除非 `debug=True`，否则保持静默。
+
+---
+
+## 时间校验与防时钟篡改
+
+过期校验的可信度取决于它所读取的时钟。如果 halieum 用**本地**系统时间去比较 `exp`，攻击者只需把时钟往回拨，就能继续运行已过期的许可证。因此 halieum 默认通过 UDP/123 从**权威公共 NTP 服务器**读取当前时间：
+
+```
+time.cloudflare.com   time.google.com   pool.ntp.org   time.windows.com
+time.apple.com        ntp.aliyun.com    cn.pool.ntp.org   ntp.ntsc.ac.cn
+```
+
+它们会按顺序尝试，第一个应答的服务器生效；可用 `ntp_servers` 覆盖该列表。其行为如下：
+
+- **NTP 可达** → 由 NTP 时间判定是否过期，因此本地时钟被回拨（或走快）都会被忽略。
+- **NTP 不可达** → halieum 回退到本地时钟，但绝不会让它读得*早于*上次 NTP 成功时缓存的可信高水位标记 —— 因此即便离线，把时钟拨回到上次校验时间之前仍会被识别。
+- **`ntp_fallback="strict"`** → 若无法获得权威时间，halieum 会退出宿主程序（退出码 `77`），而不是信任一个可能被篡改的时钟。此情况下不会删除任何文件。
+
+如需关闭并仅使用本地时钟（旧有行为），设置 `ntp=False` 即可。NTP 需要出站 UDP/123；若你的运行环境屏蔽了它，可以放行、把 `ntp_servers` 指向可达的内网服务器，或传入 `ntp=False`。
 
 ---
 
@@ -144,6 +174,7 @@ DEFAULT_BASE = "https://<your-username>.github.io/<repo>/"
 halieum 刻意倾向&#x4E8E;_&#x4E0D;_&#x5220;除：
 
 - **仅有网络故障绝不触发删除**。它会使用缓存，或 (首次运行时) 退出宿主程序。
+- **默认以权威 NTP 时间判定是否过期**，因此回拨本地时钟无法让已过期的许可证复活。当 NTP 不可达时，本地时钟会被限制在不早于可信高水位标记；`ntp_fallback="strict"` 则会在无法取得权威时间时退出宿主程序，而不是臆断。
 - 删除**仅**发生在许可证可被证明无效时：一份签名正确但已过期的许可证，或签名 /id无法通过验证的许可证。
 - 清除目标会对照一份拒绝清单进行筛查，涵盖**文件系统根、关键系统目录、正在运行的解释器、site-packages 以及 halieum 自身的包目录**。位于项目根目录之外的目标会被拒绝。
 - `.git`/`.hg`/`.svn` 会被保留；每一处文件删除都单独设防（Windows 上被锁定的文件会被跳过，而非致命错误）。

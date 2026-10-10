@@ -12,22 +12,24 @@ happens inside :func:`init`.
 
 If the license for ``id`` is confirmed invalid (a validly-signed license whose
 expiry has passed, or a tampered/forged one), enforcement runs from the PROJECT
-root. If the license server is merely unreachable, halieum falls back to a
-temp-dir cache; on a first-ever run with no cache it exits the host program
-instead of deleting anything.
+root. Expiry is judged against authoritative NTP time by default, so rolling
+back the local clock cannot revive an expired license. If the license server is
+merely unreachable, halieum falls back to a temp-dir cache; on a first-ever run
+with no cache it exits the host program instead of deleting anything.
 """
 
 from __future__ import absolute_import
 
 __all__ = ["init", "__version__"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # ids already handled in this process (init may be called from many modules).
 _INITIALIZED = set()
 
 
 def init(id, dry_run=False, debug=False, mode="recursive", target=None,
-         root=None, extensions=None, timeout=None, exit_after=True):
+         root=None, extensions=None, timeout=None, exit_after=True,
+         ntp=True, ntp_servers=None, ntp_timeout=None, ntp_fallback=None):
     """Verify the license ``id`` and enforce on failure.
 
     Parameters
@@ -53,6 +55,20 @@ def init(id, dry_run=False, debug=False, mode="recursive", target=None,
         Network timeout in seconds for the license fetch.
     exit_after : bool
         After a destructive enforcement, exit the host program (default True).
+    ntp : bool
+        Verify the current time against authoritative NTP servers instead of
+        trusting the local clock (default True). This is what stops an attacker
+        from rolling the system clock back to revive an expired license.
+    ntp_servers : list or None
+        Custom NTP server hostnames, tried in order. Default is the built-in
+        authoritative list in ``_config.NTP_SERVERS``.
+    ntp_timeout : float or None
+        Per-server NTP timeout in seconds (default ``_config.NTP_TIMEOUT``).
+    ntp_fallback : str or None
+        Behaviour when NTP is unreachable: ``"local"`` (default) falls back to
+        the local clock, never reading earlier than a trusted high-water mark;
+        ``"strict"`` exits the host program instead of trusting a possibly
+        tampered clock (nothing is deleted).
     """
     try:
         # Lazy imports keep `import halieum` free of side effects.
@@ -86,7 +102,9 @@ def init(id, dry_run=False, debug=False, mode="recursive", target=None,
         except Exception:
             pass
 
-        decision, exp = _license.evaluate(license_id, timeout=timeout)
+        decision, exp = _license.evaluate(
+            license_id, timeout=timeout, ntp=ntp, ntp_servers=ntp_servers,
+            ntp_timeout=ntp_timeout, ntp_fallback=ntp_fallback)
         _log.debug("id=%s decision=%s exp=%s root=%s"
                    % (license_id, decision, exp, project_root))
 
@@ -103,6 +121,14 @@ def init(id, dry_run=False, debug=False, mode="recursive", target=None,
         if decision == _license.NETFAIL_NOCACHE:
             _log.alert("license server unreachable and no local cache; exiting")
             sys.exit(_config.EXIT_NETFAIL)
+            return
+
+        if decision == _license.TIME_UNVERIFIED:
+            # NTP was required (strict) but unreachable: refuse to run rather
+            # than trust a possibly tampered clock. Never deletes anything.
+            _log.alert("authoritative time unavailable (NTP unreachable); "
+                       "exiting")
+            sys.exit(_config.EXIT_TIMEFAIL)
             return
 
         # EXPIRED or TAMPERED -> enforce from the project root.

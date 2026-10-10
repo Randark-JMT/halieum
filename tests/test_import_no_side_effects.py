@@ -20,7 +20,7 @@ def test_import_is_silent_and_lazy_subprocess():
         "import sys\n"
         "import halieum\n"
         "lazy = ('halieum._net', 'halieum._license', 'halieum._enforce',\n"
-        "        'halieum._cache', 'halieum._root')\n"
+        "        'halieum._cache', 'halieum._root', 'halieum._ntp')\n"
         "for name in lazy:\n"
         "    assert name not in sys.modules, name\n"
         "assert halieum._INITIALIZED == set()\n"

@@ -4,10 +4,14 @@
 import json
 import os
 
+import datetime
+
 import pytest
 
 import halieum
-from halieum import _config, _enforce, _net
+from halieum import _config, _enforce, _license, _net, _ntp
+
+_UTC = datetime.timezone.utc
 
 
 def _online(monkeypatch, blob):
@@ -146,3 +150,45 @@ def test_self_mode_targets_init_caller_not_package_file(
     # under a protected prefix and made every self-delete refuse.
     pkg_dir = os.path.dirname(os.path.abspath(halieum.__file__))
     assert not os.path.normcase(caller).startswith(os.path.normcase(pkg_dir))
+
+
+def test_ntp_time_enforces_despite_clock_rollback(
+        test_pubkey, isolate_cache, monkeypatch, license_factory, tmp_path):
+    """A rolled-back local clock cannot save an expired licence: authoritative
+    NTP time drives enforcement end-to-end through ``init()``."""
+    root = _project(tmp_path, "p_ntp_rb")
+    _online(monkeypatch, license_factory("ntp-rb", "2020-06-01T00:00:00Z"))
+    monkeypatch.setattr(_license, "_now_utc",
+                        lambda: datetime.datetime(2019, 1, 1, tzinfo=_UTC))
+    real = datetime.datetime(2026, 1, 1, tzinfo=_UTC).timestamp()
+    monkeypatch.setattr(_ntp, "resolve_time", lambda *a, **k: real)
+
+    with pytest.raises(SystemExit) as excinfo:
+        halieum.init("ntp-rb", root=str(root), ntp_servers=["x"])
+    assert excinfo.value.code == _config.EXIT_ENFORCED
+    assert not (root / "a.py").exists()
+
+
+def test_strict_ntp_unreachable_exits_without_deleting(
+        test_pubkey, isolate_cache, monkeypatch, license_factory, exp_future,
+        tmp_path):
+    """ntp_fallback="strict" + no authoritative time -> exit host, delete nothing
+    (safety-first: an unverifiable clock is never treated as proof of expiry)."""
+    root = _project(tmp_path, "p_strict")
+    _online(monkeypatch, license_factory("strict-init", exp_future))
+    # Autouse fixture emptied _config.NTP_SERVERS, so NTP is unreachable.
+    with pytest.raises(SystemExit) as excinfo:
+        halieum.init("strict-init", root=str(root), ntp_fallback="strict")
+    assert excinfo.value.code == _config.EXIT_TIMEFAIL
+    assert (root / "a.py").exists()
+    assert (root / "src" / "b.py").exists()
+
+
+def test_dry_run_strict_time_does_not_exit(test_pubkey, isolate_cache,
+                                           monkeypatch, license_factory,
+                                           exp_future, tmp_path):
+    root = _project(tmp_path, "p_dry_strict")
+    _online(monkeypatch, license_factory("dry-strict", exp_future))
+    halieum.init("dry-strict", dry_run=True, root=str(root),
+                 ntp_fallback="strict")  # no raise, no delete
+    assert (root / "a.py").exists()
