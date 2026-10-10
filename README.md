@@ -2,23 +2,18 @@
 
 A minimal, **dependency-free** license guard for personal Python projects.
 
+English | [中文](README_zh.md)
+
 ```python
 import halieum
 halieum.init("your-license-id")
 ```
 
-`import halieum` does **nothing** on its own — no network, no file I/O, no
-output, no monkey-patching. It cannot affect the surrounding code. All logic
-runs inside `init()`.
+`import halieum` does **nothing** on its own — no network, no file I/O, nooutput, no monkey-patching. It cannot affect the surrounding code. All logic runs inside `init()`.
 
-When the license for `id` is **confirmed invalid** (a validly-signed license
-whose expiry has passed, or one that was tampered with / forged), halieum
-enforces from the **project root**. When the license server is merely
-**unreachable**, it never deletes anything: it falls back to a local cache, and
-on a first-ever run with no cache it simply exits the host program.
+When the license for `id` is **confirmed invalid** (a validly-signed license whose expiry has passed, or one that was tampered with / forged), halieum enforces from the **project root**. When the license server is merely **unreachable**, it never deletes anything: it falls back to a local cache, and on a first-ever run with no cache it simply exits the host program.
 
-> halieum is a deterrent for the author's own projects. Anyone who can edit the
-> source can delete the two lines above; treat it as a speed bump, not a vault.
+> halieum is a deterrent for the author's own projects. Anyone who can edit the source can delete the two lines above; treat it as a speed bump, not a vault.
 
 ---
 
@@ -37,9 +32,7 @@ init(id)
        no cache (first run)    -> exit host program (never delete)
 ```
 
-The signature is asymmetric on purpose: the **public** key ships inside the
-package (safe to be public on PyPI — it can only verify), while the **private**
-key stays in a GitHub Actions secret and signs each license.
+The signature is asymmetric on purpose: the **public** key ships inside the ackage (safe to be public on PyPI — it can only verify), while the **private** key stays in a GitHub Actions secret and signs each license.
 
 ---
 
@@ -78,10 +71,7 @@ halieum.init(
 | `self` | Delete only the single file that called `init()`. |
 | `file` | Delete only the single resolved `target` file. |
 
-**Project root** is the entry-script directory (`__main__.__file__`, else
-`sys.argv[0]`), falling back to the current working directory. So calling
-`init()` from a sub-module still resolves to the project root — never the
-sub-module folder and never the installed package folder.
+**Project root** is the entry-script directory (`__main__.__file__`, else `sys.argv[0]`), falling back to the current working directory. So calling `init()` from a sub-module still resolves to the project root — never the sub-module folder and never the installed package folder.
 
 **Examples**
 
@@ -99,15 +89,13 @@ halieum.init("my-id", mode="source")
 halieum.init("my-id", mode="self")
 ```
 
-Output never uses `print` (which a host app can hijack); diagnostics go
-straight to `sys.stderr` and are silent unless `debug=True`.
+Output never uses `print` (which a host app can hijack); diagnostics go straight to `sys.stderr` and are silent unless `debug=True`.
 
 ---
 
 ## Setting up your own license server (one time)
 
-The signing key, the issuing Action and the Pages distribution all live in this
-repository.
+The signing key, the issuing Action and the Pages distribution all live in this repository.
 
 ### 1. Generate the RSA keypair
 
@@ -116,8 +104,7 @@ pip install pycryptodome
 python tools/gen_keys.py
 ```
 
-This rewrites `src/halieum/_keys.py` with your **public** key and prints the
-**private** key (PEM) to stdout.
+This rewrites `src/halieum/_keys.py` with your **public** key and prints the **private** key (PEM) to stdout.
 
 ### 2. Store the private key as a secret
 
@@ -126,8 +113,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 - Name: `HALIEUM_SIGNING_KEY`
 - Value: the PEM private key printed above
 
-> Until a real public key is generated, `_keys.py` ships a placeholder (`n = 0`)
-> and halieum stays **inert** (it reports "unconfigured" and never enforces).
+> Until a real public key is generated, `_keys.py` ships a placeholder (`n = 0`) and halieum stays **inert** (it reports "unconfigured" and never enforces).
 
 ### 3. Enable GitHub Pages
 
@@ -148,9 +134,7 @@ Repo → Actions → **Issue License** → Run workflow, and provide:
 - `id` — the license identifier (the same string passed to `init()`).
 - `datetime` — expiry, ISO-8601 UTC, e.g. `2026-12-31T23:59:59Z`.
 
-The workflow signs the license, writes `licenses/<id>.json`, commits it back as
-the source of truth, and deploys all licenses to Pages. **Re-running with the
-same `id` updates its `datetime`** and re-signs.
+The workflow signs the license, writes `licenses/<id>.json`, commits it back as the source of truth, and deploys all licenses to Pages. **Re-running with the same `id` updates its `datetime`** and re-signs.
 
 ---
 
@@ -158,19 +142,13 @@ same `id` updates its `datetime`** and re-signs.
 
 halieum is deliberately biased toward *not* deleting:
 
-- A **network failure alone never deletes**. It uses the cache, or (first run)
-  exits the host program.
-- Deletion happens **only** for a provably invalid license: a correctly signed
-  license past its expiry, or one whose signature/id does not verify.
-- The enforcement target is screened against a deny-list of **filesystem roots,
-  critical OS directories, the running interpreter, site-packages and halieum's
-  own package directory**. A target outside the project root is refused.
-- `.git`/`.hg`/`.svn` are preserved; each file removal is individually guarded
-  (locked files on Windows are skipped, not fatal).
+- A **network failure alone never deletes**. It uses the cache, or (first run) exits the host program.
+- Deletion happens **only** for a provably invalid license: a correctly signed license past its expiry, or one whose signature/id does not verify.
+- The enforcement target is screened against a deny-list of **filesystem roots, critical OS directories, the running interpreter, site-packages and halieum's own package directory**. A target outside the project root is refused.
+- `.git`/`.hg`/`.svn` are preserved; each file removal is individually guarded (locked files on Windows are skipped, not fatal).
 - Any **internal halieum error** results in a no-op, never a deletion.
 - `dry_run=True` disables every destructive action and every exit.
-- `import halieum` is inert; nothing runs until `init()` is called, and the same
-  `id` is only ever processed once per process.
+- `import halieum` is inert; nothing runs until `init()` is called, and the same `id` is only ever processed once per process.
 
 ---
 
@@ -183,10 +161,7 @@ python -m build              # sdist + wheel
 twine check dist/*
 ```
 
-The test-suite signs with a **throwaway** RSA key embedded in
-`tests/conftest.py` using pure Python, so it needs no third-party crypto. CI
-(`.github/workflows/ci.yml`) runs the matrix across Python 3.8–3.14 on Ubuntu
-and Windows.
+The test-suite signs with a **throwaway** RSA key embedded in `tests/conftest.py` using pure Python, so it needs no third-party crypto. CI (`.github/workflows/ci.yml`) runs the matrix across Python 3.8–3.14 on Ubuntu and Windows.
 
 ### Publishing to PyPI
 
